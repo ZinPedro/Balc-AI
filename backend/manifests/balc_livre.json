@@ -1,0 +1,26 @@
+{
+  "site_id": "balc_livre",
+  "site_name": "Atendimento Livre (Sem site acoplado)",
+  "api_base_url": "",
+  "simulation_mode": true,
+  "persona": "Você é o BALC, um assistente de acessibilidade conversacional paciente, claro e consultivo. Neste modo você ainda NÃO está acoplado a nenhum site específico: seu papel é explicar como você funciona, tirar dúvidas e ajudar o usuário a planejar ideias ou tarefas passo a passo.",
+  "greeting": "Olá! Eu sou o BALC, seu assistente de acessibilidade por voz, botões e texto. Ainda não estou conectado a nenhum site específico — como posso te ajudar agora?",
+  "initial_options": [
+    "Como você funciona?",
+    "Me ajude a planejar uma tarefa",
+    "Como você ajuda nos sites?"
+  ],
+  "theme": {
+    "accent_color": "#0b57d0",
+    "confirm_color": "#137333"
+  },
+  "auth": {
+    "enabled": false,
+    "login_endpoint": "/auth/login",
+    "identifier_field": "email",
+    "identifier_label": "seu e-mail ou telefone",
+    "password_field": "password",
+    "token_response_key": "access_token"
+  },
+  "actions": []
+}

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Site Exemplo Complexo (Teste de Plug &amp; Unplug do BALC)</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 0;
+        background: #f3f4f6;
+        color: #1f2937;
+      }
+      header {
+        background: #111827;
+        color: white;
+        padding: 12px 24px;
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+      }
+      .nav-links span {
+        margin-left: 12px;
+        opacity: 0.8;
+      }
+      main {
+        max-width: 960px;
+        margin: 24px auto;
+        padding: 16px;
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        gap: 16px;
+      }
+      .panel {
+        background: white;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        padding: 16px;
+        font-size: 13px;
+      }
+      .badge {
+        display: inline-block;
+        background: #dbeafe;
+        color: #1e40af;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-weight: 600;
+        margin-bottom: 12px;
+      }
+      input, select {
+        width: 100%;
+        padding: 6px;
+        margin: 4px 0 10px;
+        box-sizing: border-box;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Portal Comercial Exemplo (Interface Tradicional)</strong>
+      <div class="nav-links">
+        <span>Início</span>
+        <span>Categorias</span>
+        <span>Filtros Avançados</span>
+        <span>Relatórios</span>
+        <span>Configurações</span>
+        <span>Minha Conta</span>
+      </div>
+    </header>
+
+    <main>
+      <aside class="panel">
+        <strong>Filtros Complexos</strong>
+        <p>Categoria</p>
+        <select><option>Todas</option></select>
+        <p>Faixa de Preço</p>
+        <input placeholder="Mínimo" />
+        <input placeholder="Máximo" />
+        <p>Ordenação</p>
+        <select><option>Relevância</option></select>
+      </aside>
+
+      <section class="panel">
+        <span class="badge">Demonstração Plug &amp; Unplug (1 linha de código)</span>
+        <h2>Simulação de um site tradicional cheio de campos</h2>
+        <p>
+          Esta página simula um site comum com menus, letras pequenas e formulários densos.
+          Clique no botão azul <strong>"🎙️ Ativar BALC (Modo Fácil)"</strong> no canto inferior direito
+          para abrir a camada acessível por cima deste site.
+        </p>
+        <hr />
+        <p><strong>Formulário tradicional:</strong></p>
+        <input placeholder="SKU / Código interno" />
+        <input placeholder="Título do anúncio" />
+        <input placeholder="Unidade tributável" />
+        <input placeholder="Valor unitário (BRL)" />
+      </section>
+    </main>
+
+    <!-- ÚNICA LINHA NECESSÁRIA PARA ACOPLAR O BALC EM QUALQUER SITE -->
+    <script src="/balc-embed.js" data-site="demo_generico"></script>
+  </body>
+</html>

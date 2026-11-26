@@ -1,0 +1,84 @@
+{
+  "site_id": "demo_generico",
+  "site_name": "Loja Exemplo (Sandbox BALC)",
+  "api_base_url": "",
+  "simulation_mode": true,
+  "persona": "Você é o BALC, um balconista virtual paciente, claro e consultivo. Ajude pessoas que preferem conversar passo a passo, usando frases curtas, sem termos técnicos e sempre oferecendo ajuda para planejar antes de concluir uma ação.",
+  "greeting": "Olá! Eu sou o BALC, seu assistente de atendimento por voz e texto. O que você gostaria de fazer hoje?",
+  "initial_options": [
+    "Quero anunciar um item",
+    "Quero buscar ofertas",
+    "Entrar na minha conta"
+  ],
+  "theme": {
+    "accent_color": "#0b57d0",
+    "confirm_color": "#137333"
+  },
+  "auth": {
+    "enabled": true,
+    "login_endpoint": "/auth/login",
+    "identifier_field": "email",
+    "identifier_label": "seu e-mail ou telefone",
+    "password_field": "password",
+    "token_response_key": "access_token"
+  },
+  "actions": [
+    {
+      "id": "criar_anuncio",
+      "name": "Criar um novo anúncio",
+      "description": "Ajuda o usuário a planejar e publicar um novo item ou serviço na plataforma.",
+      "requires_auth": false,
+      "endpoint": "/itens",
+      "method": "POST",
+      "consultative_endpoint": "/itens",
+      "consultative_hint": "Se o usuário ainda não definiu o preço, consulte os valores praticados em itens semelhantes e sugira faixas de preço claras (ex: mais rápido, média do mercado, outro valor).",
+      "fields": [
+        {
+          "name": "titulo",
+          "label": "Nome do item",
+          "type": "string",
+          "required": true,
+          "description": "O que a pessoa quer anunciar."
+        },
+        {
+          "name": "quantidade",
+          "label": "Quantidade",
+          "type": "number",
+          "required": true,
+          "description": "Quantidade disponível."
+        },
+        {
+          "name": "unidade",
+          "label": "Unidade",
+          "type": "string",
+          "required": true,
+          "description": "Ex: unidade, caixa, quilo, pacote."
+        },
+        {
+          "name": "preco",
+          "label": "Preço unitário (R$)",
+          "type": "number",
+          "required": true,
+          "description": "Valor em reais por unidade."
+        }
+      ]
+    },
+    {
+      "id": "buscar_catalogo",
+      "name": "Buscar no catálogo",
+      "description": "Busca itens disponíveis na plataforma para exibir um por tela.",
+      "requires_auth": false,
+      "endpoint": "/itens",
+      "method": "GET",
+      "fields": [
+        {
+          "name": "termo",
+          "label": "O que você procura",
+          "type": "string",
+          "required": true,
+          "description": "Palavra-chave do item desejado."
+        }
+      ]
+    }
+  ]
+}
