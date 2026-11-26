@@ -1,6 +1,8 @@
 import asyncio
 import json
+import logging
 import os
+import re
 from typing import Any, Literal, Optional
 
 import httpx
@@ -14,6 +16,8 @@ from http_executor import (
     sanitize_action_payload,
 )
 from schemas import BalcRequest, BalcResponse, LLMDecision, SiteManifest
+
+logger = logging.getLogger("balc.agent")
 
 ProviderName = Literal["groq", "cerebras", "openrouter", "gemini", "fallback_local"]
 
@@ -49,6 +53,15 @@ OPENAI_COMPAT_PROVIDERS = [
 ]
 
 _gemini_client_cache: dict[str, genai.Client] = {}
+_openai_http_client: Optional[httpx.AsyncClient] = None
+_JSON_FENCE_PATTERN = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
+
+
+def _get_openai_http_client() -> httpx.AsyncClient:
+    global _openai_http_client
+    if _openai_http_client is None or _openai_http_client.is_closed:
+        _openai_http_client = httpx.AsyncClient(timeout=6.0)
+    return _openai_http_client
 
 
 def _get_gemini_client(api_key: str) -> genai.Client:
@@ -71,6 +84,14 @@ def _get_gemini_model_chain() -> list[str]:
         if m not in chain:
             chain.append(m)
     return chain
+
+
+def _parse_llm_decision(raw_content: str) -> LLMDecision:
+    cleaned = _JSON_FENCE_PATTERN.sub("", (raw_content or "").strip())
+    parsed = json.loads(cleaned)
+    if isinstance(parsed, dict) and isinstance(parsed.get("dados_coletados_json"), dict):
+        parsed["dados_coletados_json"] = json.dumps(parsed["dados_coletados_json"], ensure_ascii=False)
+    return LLMDecision.model_validate(parsed)
 
 
 async def _call_openai_compatible(
@@ -102,11 +123,11 @@ async def _call_openai_compatible(
         "Content-Type": "application/json",
     }
 
-    async with httpx.AsyncClient(timeout=6.0) as client:
-        resp = await client.post(provider_cfg["url"], json=payload, headers=headers)
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
-        return LLMDecision.model_validate_json(content)
+    client = _get_openai_http_client()
+    resp = await client.post(provider_cfg["url"], json=payload, headers=headers)
+    resp.raise_for_status()
+    content = resp.json()["choices"][0]["message"]["content"]
+    return _parse_llm_decision(content)
 
 
 def _call_gemini_sync(
@@ -130,8 +151,9 @@ def _call_gemini_sync(
                 },
                 store=False,
             )
-            return LLMDecision.model_validate_json(interaction.output_text)
+            return _parse_llm_decision(interaction.output_text)
         except Exception as exc:
+            logger.warning("Falha no modelo Gemini '%s': %s", model_name, exc)
             last_error = exc
             continue
 
@@ -150,7 +172,8 @@ async def _run_llm_cascade(
         try:
             decision = await _call_openai_compatible(cfg, key, turn_input, system_instruction)
             return decision, cfg["name"]  # type: ignore[return-value]
-        except Exception:
+        except Exception as exc:
+            logger.warning("Provedor '%s' falhou, tentando próximo da cascata: %s", cfg["name"], exc)
             continue
 
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
@@ -163,9 +186,10 @@ async def _run_llm_cascade(
                 system_instruction,
             )
             return decision, "gemini"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Provedor 'gemini' falhou: %s", exc)
 
+    logger.error("Todos os provedores de LLM falharam ou não estão configurados; ativando fallback_local.")
     return None, "fallback_local"
 
 
@@ -223,13 +247,22 @@ CONTEXTO CONSULTIVO ATUAL:
 """.strip()
 
 
-def _parse_collected_json(raw_json: str, previous: dict[str, Any]) -> dict[str, Any]:
+def _parse_collected_json(
+    raw_json: str,
+    previous: dict[str, Any],
+    *,
+    action_cleared: bool = False,
+) -> dict[str, Any]:
+    if action_cleared:
+        return {}
     merged = dict(previous)
     try:
         parsed = json.loads(raw_json)
         if isinstance(parsed, dict):
             for k, v in parsed.items():
-                if v is not None and v != "":
+                if v is None or v == "":
+                    merged.pop(k, None)
+                else:
                     merged[k] = v
     except Exception:
         pass
@@ -240,6 +273,18 @@ def _fallback_local_decision(req: BalcRequest, manifest: SiteManifest) -> BalcRe
     """Fallback determinístico se nenhum provedor de IA estiver configurado ou todos estiverem ocupados."""
     txt = req.texto_usuario.strip()
     lower = txt.lower()
+    is_authenticated = bool(req.token_usuario and req.token_usuario.strip())
+
+    if lower in ("cancelar", "voltar", "sair", "voltar ao início", "voltar ao inicio"):
+        return BalcResponse(
+            mensagem_balconista="Tudo bem! Cancelei o passo anterior. Como posso te ajudar agora?",
+            modo_entrada="normal",
+            opcoes_botoes=manifest.initial_options or ["Começar de novo"],
+            acao_atual=None,
+            acao_pendente=None,
+            dados_coletados={},
+            origem_motor="fallback_local",
+        )
 
     if manifest.auth.enabled and ("entrar" in lower or "login" in lower or "conta" in lower):
         return BalcResponse(
@@ -250,16 +295,18 @@ def _fallback_local_decision(req: BalcRequest, manifest: SiteManifest) -> BalcRe
             modo_entrada="normal",
             opcoes_botoes=["Cancelar"],
             acao_atual="autenticar",
+            acao_pendente=req.acao_pendente,
             dados_coletados=req.dados_coletados,
             origem_motor="fallback_local",
         )
 
-    if req.acao_atual == "autenticar" and not req.usuario_autenticado:
+    if manifest.auth.enabled and req.acao_atual == "autenticar" and not is_authenticated:
         return BalcResponse(
             mensagem_balconista="Encontrei seu acesso! Agora digite sua senha na caixa segura abaixo. Ela vai direto para o site, sem passar pela IA.",
             modo_entrada="senha_cofre",
             opcoes_botoes=["Cancelar"],
             acao_atual="autenticar",
+            acao_pendente=req.acao_pendente,
             identificador_login=txt,
             dados_coletados=req.dados_coletados,
             origem_motor="fallback_local",
@@ -273,6 +320,7 @@ def _fallback_local_decision(req: BalcRequest, manifest: SiteManifest) -> BalcRe
         modo_entrada="normal",
         opcoes_botoes=manifest.initial_options or ["Tentar novamente"],
         acao_atual=req.acao_atual,
+        acao_pendente=req.acao_pendente,
         dados_coletados=req.dados_coletados,
         origem_motor="fallback_local",
     )
@@ -305,7 +353,12 @@ async def process_balc_turn(req: BalcRequest, manifest: SiteManifest) -> BalcRes
     if decision is None:
         return _fallback_local_decision(req, manifest)
 
-    dados_atualizados = _parse_collected_json(decision.dados_coletados_json, req.dados_coletados)
+    action_cleared = req.acao_atual is not None and decision.acao_atual is None
+    dados_atualizados = _parse_collected_json(
+        decision.dados_coletados_json,
+        req.dados_coletados,
+        action_cleared=action_cleared,
+    )
 
     target_action = find_action(manifest, decision.acao_atual)
 
@@ -320,6 +373,7 @@ async def process_balc_turn(req: BalcRequest, manifest: SiteManifest) -> BalcRes
                 modo_entrada="normal",
                 opcoes_botoes=["Cancelar"],
                 acao_atual="autenticar",
+                acao_pendente=target_action.id,
                 dados_coletados=dados_atualizados,
                 acao_concluida=False,
                 itens_catalogo=[],
@@ -338,6 +392,7 @@ async def process_balc_turn(req: BalcRequest, manifest: SiteManifest) -> BalcRes
                     modo_entrada="normal",
                     opcoes_botoes=["Cancelar"],
                     acao_atual=target_action.id,
+                    acao_pendente=None,
                     dados_coletados=sanitized_dados,
                     acao_concluida=False,
                     itens_catalogo=[],
@@ -351,6 +406,7 @@ async def process_balc_turn(req: BalcRequest, manifest: SiteManifest) -> BalcRes
                 modo_entrada="confirmacao",
                 opcoes_botoes=["Confirmar", "Alterar dados", "Cancelar"],
                 acao_atual=target_action.id,
+                acao_pendente=None,
                 dados_coletados=sanitized_dados,
                 acao_concluida=False,
                 itens_catalogo=[],
@@ -365,6 +421,7 @@ async def process_balc_turn(req: BalcRequest, manifest: SiteManifest) -> BalcRes
             modo_entrada="normal",
             opcoes_botoes=manifest.initial_options or ["Começar de novo"],
             acao_atual=None if ok else decision.acao_atual,
+            acao_pendente=None,
             dados_coletados={} if ok else dados_atualizados,
             acao_concluida=ok,
             itens_catalogo=itens,
@@ -382,19 +439,30 @@ async def process_balc_turn(req: BalcRequest, manifest: SiteManifest) -> BalcRes
                 modo_entrada="normal",
                 opcoes_botoes=["Fazer outra busca", "Voltar ao início"],
                 acao_atual=None,
+                acao_pendente=None,
                 dados_coletados={},
                 acao_concluida=ok,
                 itens_catalogo=itens,
                 origem_motor=provider_used,
             )
 
+    # Garante que modo_entrada="senha_cofre" só seja ativado se o site suportar autenticação
+    modo_saida = decision.modo_entrada
+    identificador_saida = decision.identificador_login
+    if modo_saida == "senha_cofre" and not manifest.auth.enabled:
+        modo_saida = "normal"
+        identificador_saida = None
+
+    acao_pendente_saida = req.acao_pendente if decision.acao_atual == "autenticar" else None
+
     return BalcResponse(
         mensagem_balconista=decision.mensagem_balconista,
-        modo_entrada=decision.modo_entrada,
+        modo_entrada=modo_saida,
         opcoes_botoes=decision.opcoes_botoes,
         acao_atual=decision.acao_atual,
+        acao_pendente=acao_pendente_saida,
         dados_coletados=dados_atualizados,
-        identificador_login=decision.identificador_login,
+        identificador_login=identificador_saida,
         acao_concluida=False,
         itens_catalogo=[],
         origem_motor=provider_used,

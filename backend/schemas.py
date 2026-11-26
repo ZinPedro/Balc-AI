@@ -78,6 +78,7 @@ class BalcRequest(BaseModel):
     site_id: str = Field(default="balc_livre", min_length=1, max_length=64)
     texto_usuario: str = Field(..., min_length=1, max_length=2000)
     acao_atual: Optional[str] = Field(default=None, max_length=64)
+    acao_pendente: Optional[str] = Field(default=None, max_length=64)
     dados_coletados: dict[str, Any] = Field(default_factory=dict)
     historico: list[ConversationTurn] = Field(default_factory=list, max_length=20)
     usuario_autenticado: bool = False
@@ -135,6 +136,7 @@ class BalcResponse(BaseModel):
     modo_entrada: Literal["normal", "senha_cofre", "confirmacao"] = "normal"
     opcoes_botoes: list[str] = Field(default_factory=list)
     acao_atual: Optional[str] = None
+    acao_pendente: Optional[str] = None
     dados_coletados: dict[str, Any] = Field(default_factory=dict)
     identificador_login: Optional[str] = None
     acao_concluida: bool = False

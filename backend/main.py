@@ -60,18 +60,45 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
-# Rate limiter leve em memória (janela deslizante de 60s por IP e bucket)
+# Rate limiter leve em memória (janela deslizante de 60s por IP e bucket, com limpeza periódica)
 _rate_limit_buckets: dict[str, deque[float]] = defaultdict(deque)
 _RATE_WINDOW_SECONDS = 60.0
+_last_rate_cleanup = 0.0
+
+
+def _extract_client_ip(request: Request) -> str:
+    trust_proxy = os.getenv("BALC_TRUST_PROXY", "").strip().lower() in ("1", "true", "yes")
+    if trust_proxy:
+        forwarded_for = request.headers.get("x-forwarded-for", "")
+        if forwarded_for:
+            first_ip = forwarded_for.split(",")[0].strip()
+            if first_ip:
+                return first_ip
+    return request.client.host if request.client else "unknown"
+
+
+def _cleanup_stale_buckets(now: float) -> None:
+    global _last_rate_cleanup
+    if (now - _last_rate_cleanup) < _RATE_WINDOW_SECONDS:
+        return
+    _last_rate_cleanup = now
+    stale_keys = [
+        key
+        for key, hits in _rate_limit_buckets.items()
+        if not hits or (now - hits[-1]) > _RATE_WINDOW_SECONDS
+    ]
+    for key in stale_keys:
+        _rate_limit_buckets.pop(key, None)
 
 
 def _make_rate_limiter(bucket: str, default_limit: int):
     limit = int(os.getenv(f"BALC_RATE_LIMIT_{bucket.upper()}", str(default_limit)))
 
     async def _check_limit(request: Request) -> None:
-        client_ip = request.client.host if request.client else "unknown"
-        key = f"{bucket}:{client_ip}"
         now = time.monotonic()
+        _cleanup_stale_buckets(now)
+        client_ip = _extract_client_ip(request)
+        key = f"{bucket}:{client_ip}"
         hits = _rate_limit_buckets[key]
         while hits and (now - hits[0]) > _RATE_WINDOW_SECONDS:
             hits.popleft()
@@ -137,7 +164,7 @@ async def conversar(req: BalcRequest):
 
 
 class TTSRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=600)
+    text: str = Field(..., min_length=1, max_length=2000)
     voice: AllowedVoice = "pt-BR-FranciscaNeural"
 
 
@@ -148,27 +175,42 @@ async def _stream_tts(text: str, voice: AllowedVoice):
     if len(clean_text) > 600:
         clean_text = clean_text[:600]
 
+    communicate = edge_tts.Communicate(clean_text, voice)
+    stream = communicate.stream()
+
+    # Busca o primeiro chunk antes de enviar 200 OK para falhar com HTTP 502 caso o TTS esteja indisponível
+    first_audio_chunk: bytes | None = None
     try:
-        communicate = edge_tts.Communicate(clean_text, voice)
-
-        async def audio_generator():
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    yield chunk["data"]
-
-        return StreamingResponse(
-            audio_generator(),
-            media_type="audio/mpeg",
-            headers={"Cache-Control": "private, no-store"},
-        )
+        async for chunk in stream:
+            if chunk["type"] == "audio" and chunk["data"]:
+                first_audio_chunk = chunk["data"]
+                break
     except Exception:
-        logger.exception("Erro ao gerar áudio TTS com voz=%s", voice)
-        raise HTTPException(status_code=500, detail="Não foi possível gerar o áudio agora.")
+        logger.exception("Erro ao iniciar áudio TTS com voz=%s", voice)
+        raise HTTPException(status_code=502, detail="Não foi possível gerar o áudio agora.")
+
+    if not first_audio_chunk:
+        raise HTTPException(status_code=502, detail="Nenhum áudio foi gerado para o texto informado.")
+
+    async def audio_generator():
+        yield first_audio_chunk
+        try:
+            async for chunk in stream:
+                if chunk["type"] == "audio" and chunk["data"]:
+                    yield chunk["data"]
+        except Exception:
+            logger.exception("Erro durante o streaming de áudio TTS com voz=%s", voice)
+
+    return StreamingResponse(
+        audio_generator(),
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 @app.get("/balc/tts", dependencies=[Depends(limit_tts)])
 async def text_to_speech_get(
-    text: str = Query(..., min_length=1, max_length=600),
+    text: str = Query(..., min_length=1, max_length=2000),
     voice: AllowedVoice = Query(default="pt-BR-FranciscaNeural"),
 ):
     """Gera áudio neural em português brasileiro via GET para streaming progressivo no <audio>."""

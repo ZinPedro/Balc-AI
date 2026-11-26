@@ -40,6 +40,7 @@ export default function App() {
   const [modoEntrada, setModoEntrada] = useState('normal'); // 'normal' | 'senha_cofre' | 'confirmacao'
   const [opcoes, setOpcoes] = useState([]);
   const [acaoAtual, setAcaoAtual] = useState(null);
+  const [acaoPendente, setAcaoPendente] = useState(null);
   const [dadosColetados, setDadosColetados] = useState({});
   const [identificadorLogin, setIdentificadorLogin] = useState('');
   const [historico, setHistorico] = useState([]);
@@ -58,8 +59,32 @@ export default function App() {
   const chatEndRef = useRef(null);
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
+    const root = document.documentElement;
+    root.setAttribute('data-theme', theme);
+
+    const hexColorPattern = /^#[0-9a-fA-F]{3,8}$/;
+    const accent = siteConfig?.theme?.accent_color;
+    const confirm = siteConfig?.theme?.confirm_color;
+
+    if (theme === 'light') {
+      if (accent && hexColorPattern.test(accent)) {
+        root.style.setProperty('--primary', accent);
+        root.style.setProperty('--mic-idle', accent);
+      } else {
+        root.style.removeProperty('--primary');
+        root.style.removeProperty('--mic-idle');
+      }
+      if (confirm && hexColorPattern.test(confirm)) {
+        root.style.setProperty('--confirm', confirm);
+      } else {
+        root.style.removeProperty('--confirm');
+      }
+    } else {
+      root.style.removeProperty('--primary');
+      root.style.removeProperty('--mic-idle');
+      root.style.removeProperty('--confirm');
+    }
+  }, [theme, siteConfig]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -70,6 +95,7 @@ export default function App() {
       const clean = (texto || '').trim();
       if (!clean || enviando) return;
 
+      const typedBeforeSend = textoInput;
       setEnviando(true);
       setError('');
       setTextoInput('');
@@ -77,7 +103,7 @@ export default function App() {
       const userMsg = { id: createMsgId('user'), role: 'user', text: clean };
       setMensagens((prev) => [...prev, userMsg]);
 
-      const nextHistory = [...historico, { role: 'user', text: clean }].slice(-8);
+      const previousHistory = historico.slice(-8);
 
       try {
         const resp = await fetch(`${BALC_API_URL}/balc/conversar`, {
@@ -87,9 +113,11 @@ export default function App() {
             site_id: siteId,
             texto_usuario: clean,
             acao_atual: overrideState.acaoAtual !== undefined ? overrideState.acaoAtual : acaoAtual,
+            acao_pendente:
+              overrideState.acaoPendente !== undefined ? overrideState.acaoPendente : acaoPendente,
             dados_coletados:
               overrideState.dadosColetados !== undefined ? overrideState.dadosColetados : dadosColetados,
-            historico: nextHistory,
+            historico: previousHistory,
             usuario_autenticado:
               overrideState.usuarioAutenticado !== undefined
                 ? overrideState.usuarioAutenticado
@@ -119,12 +147,19 @@ export default function App() {
         setModoEntrada(data.modo_entrada || 'normal');
         setOpcoes(data.opcoes_botoes || []);
         setAcaoAtual(data.acao_atual || null);
+        setAcaoPendente(data.acao_pendente || null);
         setDadosColetados(data.dados_coletados || {});
         if (data.identificador_login) {
           setIdentificadorLogin(data.identificador_login);
         }
 
-        setHistorico([...nextHistory, { role: 'assistant', text: data.mensagem_balconista }].slice(-8));
+        setHistorico(
+          [
+            ...previousHistory,
+            { role: 'user', text: clean },
+            { role: 'assistant', text: data.mensagem_balconista },
+          ].slice(-8)
+        );
 
         if (data.itens_catalogo && data.itens_catalogo.length > 0) {
           setItensCatalogo(data.itens_catalogo);
@@ -133,12 +168,16 @@ export default function App() {
           setMostrarCatalogo(false);
         }
       } catch (err) {
+        setMensagens((prev) => prev.filter((m) => m.id !== userMsg.id));
+        if (typedBeforeSend.trim() === clean) {
+          setTextoInput(typedBeforeSend);
+        }
         setError(`Não consegui falar com o BALC agora. Verifique se o backend está ligado. (${err.message})`);
       } finally {
         setEnviando(false);
       }
     },
-    [acaoAtual, dadosColetados, enviando, historico, modoEntrada, siteId, tokenUsuario]
+    [acaoAtual, acaoPendente, dadosColetados, enviando, historico, modoEntrada, siteId, textoInput, tokenUsuario]
   );
 
   const {
@@ -147,6 +186,7 @@ export default function App() {
     isSpeaking,
     speakingId,
     voiceError,
+    clearVoiceError,
     speak,
     stopSpeaking,
     toggleListening,
@@ -206,6 +246,21 @@ export default function App() {
     }
   }, [autoSpeak, isCallActive, lastMessage, loadingConfig, speak]);
 
+  // Garante privacidade: desliga o microfone imediatamente ao entrar no Modo Cofre
+  useEffect(() => {
+    if (modoEntrada === 'senha_cofre' && isListening) {
+      stopListening();
+    }
+  }, [modoEntrada, isListening, stopListening]);
+
+  // Evita que o modo ligação fique preso como "ativo" após erro de permissão/microfone
+  useEffect(() => {
+    if (voiceError && isCallActive) {
+      setIsCallActive(false);
+      stopListening();
+    }
+  }, [voiceError, isCallActive, stopListening]);
+
   // No modo ligação ao vivo, reabre o microfone automaticamente quando o BALC termina de falar
   useEffect(() => {
     if (
@@ -256,18 +311,29 @@ export default function App() {
       stopSpeaking();
       return;
     }
+    clearVoiceError();
     setIsCallActive(true);
     setAutoSpeak(true);
-    if (!isSpeaking && !enviando && modoEntrada !== 'senha_cofre') {
+
+    const willAutoSpeakLast =
+      lastMessage &&
+      lastMessage.role === 'assistant' &&
+      !loadingConfig &&
+      lastAutoSpokenIdRef.current !== lastMessage.id;
+
+    if (!willAutoSpeakLast && !isSpeaking && !enviando && modoEntrada !== 'senha_cofre') {
       startListening();
     }
   }
 
   function handleVaultSuccess(token) {
+    const pendingAction = acaoPendente;
     setTokenUsuario(token);
     setModoEntrada('normal');
+    setAcaoPendente(null);
     sendMessage('Entrei na minha conta com sucesso.', {
-      acaoAtual: null,
+      acaoAtual: pendingAction || null,
+      acaoPendente: null,
       usuarioAutenticado: true,
       tokenUsuario: token,
       modoEntradaAnterior: 'normal',
@@ -275,20 +341,26 @@ export default function App() {
   }
 
   function handleVaultCancel() {
+    const cancelText = 'Tudo bem! Cancelei o acesso à conta. Como posso te ajudar agora?';
     setModoEntrada('normal');
     setAcaoAtual(null);
+    setAcaoPendente(null);
+    setIdentificadorLogin('');
     setMensagens((prev) => [
       ...prev,
       {
         id: createMsgId('assistant'),
         role: 'assistant',
-        text: 'Tudo bem! Cancelei o acesso à conta. Como posso te ajudar agora?',
+        text: cancelText,
       },
     ]);
+    setHistorico((prev) => [...prev, { role: 'assistant', text: cancelText }].slice(-8));
     setOpcoes(siteConfig?.initial_options || []);
   }
 
-  function handleCloseEmbedded() {
+  const handleCloseEmbedded = useCallback(() => {
+    setIsCallActive(false);
+    stopListening();
     stopSpeaking();
     let targetOrigin = '*';
     if (document.referrer) {
@@ -299,7 +371,33 @@ export default function App() {
       }
     }
     window.parent.postMessage({ type: 'BALC_CLOSE' }, targetOrigin);
-  }
+  }, [stopListening, stopSpeaking]);
+
+  useEffect(() => {
+    if (!isEmbedded) return;
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        handleCloseEmbedded();
+      }
+    };
+
+    const handleParentMessage = (event) => {
+      if (event.source !== window.parent) return;
+      if (event.data && event.data.type === 'BALC_STOP_MEDIA') {
+        setIsCallActive(false);
+        stopListening();
+        stopSpeaking();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('message', handleParentMessage);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('message', handleParentMessage);
+    };
+  }, [handleCloseEmbedded, isEmbedded, stopListening, stopSpeaking]);
 
   function handleTextSubmit(e) {
     e.preventDefault();
@@ -430,6 +528,9 @@ export default function App() {
                               if (isThisSpeaking) {
                                 stopSpeaking();
                               } else {
+                                if (lastMessage && lastMessage.role === 'assistant') {
+                                  lastAutoSpokenIdRef.current = lastMessage.id;
+                                }
                                 setAutoSpeak(true);
                                 speakFromIndex(idx);
                               }
@@ -473,7 +574,7 @@ export default function App() {
             <div ref={chatEndRef} />
           </main>
 
-          {modoEntrada === 'senha_cofre' && siteConfig ? (
+          {modoEntrada === 'senha_cofre' && siteConfig?.auth?.enabled ? (
             <VaultInput
               siteConfig={siteConfig}
               identifier={identificadorLogin}

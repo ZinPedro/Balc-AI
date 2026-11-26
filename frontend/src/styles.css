@@ -49,6 +49,7 @@ body {
 
 .balc-shell {
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   max-width: 860px;
@@ -57,11 +58,22 @@ body {
   gap: 14px;
 }
 
+.balc-btn:focus-visible,
+.balc-icon-btn:focus-visible,
+.balc-audio-btn:focus-visible,
+.balc-voice-select:focus-visible,
+.balc-input:focus-visible,
+.balc-password-toggle:focus-visible {
+  outline: 3px solid var(--border);
+  outline-offset: 2px;
+}
+
 .balc-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 10px 12px;
   padding-bottom: 12px;
   border-bottom: 3px solid var(--border);
   flex-shrink: 0;
@@ -71,6 +83,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .balc-brand-title {
@@ -89,6 +102,7 @@ body {
 .balc-header-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -289,14 +303,18 @@ body {
 .balc-options {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 14px;
+  gap: 10px;
+  max-height: 28dvh;
+  overflow-y: auto;
+  flex-shrink: 0;
+  padding-right: 2px;
 }
 
 .balc-btn {
   width: 100%;
-  min-height: 68px;
-  padding: 18px 22px;
-  font-size: 1.4rem;
+  min-height: 60px;
+  padding: 14px 20px;
+  font-size: 1.3rem;
   font-weight: 800;
   border-radius: 16px;
   border: 3px solid var(--border);
@@ -350,13 +368,14 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 44px;
-  height: 44px;
+  min-width: 40px;
+  height: 40px;
   border-radius: 10px;
   background: var(--primary);
   color: var(--primary-text);
-  font-size: 1.35rem;
+  font-size: 1.25rem;
   font-weight: 900;
+  flex-shrink: 0;
 }
 
 /* Barra Inferior: Tripla Entrada (Microfone Gigante + Texto Grande) */
@@ -364,14 +383,15 @@ body {
   margin-top: auto;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   padding-top: 12px;
   border-top: 3px solid var(--border);
+  flex-shrink: 0;
 }
 
 .balc-mic-btn {
-  min-height: 78px;
-  font-size: 1.55rem;
+  min-height: 70px;
+  font-size: 1.45rem;
   background: var(--mic-idle);
   color: #ffffff;
   border-color: var(--mic-idle);
@@ -389,9 +409,10 @@ body {
 
 .balc-input {
   flex: 1;
-  min-height: 64px;
-  padding: 14px 18px;
-  font-size: 1.35rem;
+  min-width: 0;
+  min-height: 60px;
+  padding: 12px 16px;
+  font-size: 1.25rem;
   border-radius: 14px;
   border: 3px solid var(--border);
   background: var(--bg);
@@ -408,15 +429,26 @@ body {
   background: var(--vault-bg);
   border: 3px solid var(--vault-border);
   border-radius: 18px;
-  padding: 22px;
+  padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 14px;
+  max-height: 65dvh;
+  overflow-y: auto;
+  flex-shrink: 0;
 }
 
 .balc-vault-badge {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   font-size: 1.15rem;
   font-weight: 800;
+}
+
+.balc-vault-badge svg {
+  flex-shrink: 0;
+  margin-top: 2px;
 }
 
 .balc-vault-id {
@@ -425,8 +457,35 @@ body {
 }
 
 .balc-label {
-  font-size: 1.3rem;
+  font-size: 1.25rem;
   font-weight: 700;
+}
+
+.balc-password-wrap {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.balc-password-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+  min-height: 60px;
+  border-radius: 14px;
+  border: 3px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 1.05rem;
+  font-weight: 800;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.balc-password-toggle:hover {
+  background: var(--surface-strong);
 }
 
 .balc-vault-actions {
@@ -437,9 +496,13 @@ body {
 
 /* Catálogo Limpo (1 item por tela) */
 .balc-catalog {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
+  padding-bottom: 8px;
 }
 
 .balc-catalog-card {
@@ -497,7 +560,7 @@ body {
   border-radius: 12px;
   background: var(--danger);
   color: #ffffff;
-  font-size: 1.2rem;
+  font-size: 1.15rem;
   font-weight: 700;
 }
 
@@ -509,10 +572,19 @@ body {
 }
 
 @media (max-width: 600px) {
-  .balc-text-form {
+  .balc-shell {
+    padding: 12px 14px 14px;
+    gap: 10px;
+  }
+  .balc-bubble {
+    max-width: 92%;
+  }
+  .balc-text-form,
+  .balc-password-wrap {
     flex-direction: column;
   }
-  .balc-send-btn {
+  .balc-send-btn,
+  .balc-password-toggle {
     width: 100%;
   }
 }

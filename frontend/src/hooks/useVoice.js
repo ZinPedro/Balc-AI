@@ -44,12 +44,16 @@ export function useVoice({ onTranscript, voice = 'pt-BR-FranciscaNeural' }) {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingId, setSpeakingId] = useState(null);
   const [voiceError, setVoiceError] = useState('');
+
   const recognitionRef = useRef(null);
   const bestVoiceRef = useRef(null);
   const audioRef = useRef(null);
-  const audioUrlRef = useRef(null);
-  const abortControllerRef = useRef(null);
-  const ttsCacheRef = useRef(new Map());
+  const onTranscriptRef = useRef(onTranscript);
+  const speakSessionRef = useRef(0);
+
+  useEffect(() => {
+    onTranscriptRef.current = onTranscript;
+  }, [onTranscript]);
 
   const SpeechRecognition =
     typeof window !== 'undefined'
@@ -74,21 +78,25 @@ export function useVoice({ onTranscript, voice = 'pt-BR-FranciscaNeural' }) {
     };
   }, []);
 
+  const clearVoiceError = useCallback(() => {
+    setVoiceError('');
+  }, []);
+
   const stopSpeaking = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
+    speakSessionRef.current += 1;
+
     if (audioRef.current) {
-      audioRef.current.onended = null;
-      audioRef.current.onerror = null;
-      audioRef.current.pause();
-      audioRef.current.removeAttribute('src');
+      const audio = audioRef.current;
+      audio.onended = null;
+      audio.onerror = null;
+      audio.pause();
+      audio.removeAttribute('src');
+      try {
+        audio.load();
+      } catch {
+        // ignora erro ao resetar elemento de áudio
+      }
       audioRef.current = null;
-    }
-    if (audioUrlRef.current) {
-      URL.revokeObjectURL(audioUrlRef.current);
-      audioUrlRef.current = null;
     }
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
@@ -97,32 +105,41 @@ export function useVoice({ onTranscript, voice = 'pt-BR-FranciscaNeural' }) {
     setSpeakingId(null);
   }, []);
 
-  const speakWithBrowserFallback = useCallback((cleanText, messageId, onEnded = null) => {
+  const speakWithBrowserFallback = useCallback((cleanText, messageId, onEnded, sessionId) => {
+    if (sessionId !== speakSessionRef.current) return;
+
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      setIsSpeaking(false);
+      setSpeakingId(null);
       if (onEnded) onEnded();
       return;
     }
+
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = 'pt-BR';
     utterance.rate = 1.05;
     utterance.pitch = 1.0;
 
-    const voice = bestVoiceRef.current || selectBestPtBrVoice(window.speechSynthesis.getVoices());
-    if (voice) {
-      utterance.voice = voice;
+    const selectedVoice =
+      bestVoiceRef.current || selectBestPtBrVoice(window.speechSynthesis.getVoices());
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
     }
 
     utterance.onstart = () => {
+      if (sessionId !== speakSessionRef.current) return;
       setIsSpeaking(true);
       setSpeakingId(messageId);
     };
     utterance.onend = () => {
+      if (sessionId !== speakSessionRef.current) return;
       setIsSpeaking(false);
       setSpeakingId(null);
       if (onEnded) onEnded();
     };
     utterance.onerror = () => {
+      if (sessionId !== speakSessionRef.current) return;
       setIsSpeaking(false);
       setSpeakingId(null);
       if (onEnded) onEnded();
@@ -152,36 +169,50 @@ export function useVoice({ onTranscript, voice = 'pt-BR-FranciscaNeural' }) {
       }
 
       stopSpeaking();
+      const sessionId = speakSessionRef.current;
+      let fallbackTriggered = false;
 
-      const controller = new AbortController();
-      abortControllerRef.current = controller;
+      const triggerFallback = () => {
+        if (fallbackTriggered || sessionId !== speakSessionRef.current) return;
+        fallbackTriggered = true;
+        if (audioRef.current) {
+          audioRef.current.onended = null;
+          audioRef.current.onerror = null;
+          audioRef.current.pause();
+          audioRef.current.removeAttribute('src');
+          audioRef.current = null;
+        }
+        speakWithBrowserFallback(cleanText, messageId, onEnded, sessionId);
+      };
 
       try {
         setIsSpeaking(true);
         setSpeakingId(messageId);
 
-        const params = new URLSearchParams({ text: cleanText, voice });
+        const ttsText = cleanText.slice(0, 600);
+        const params = new URLSearchParams({ text: ttsText, voice });
         const streamUrl = `${BALC_API_URL}/balc/tts?${params.toString()}`;
         const audio = new Audio(streamUrl);
         audioRef.current = audio;
 
         audio.onended = () => {
+          if (sessionId !== speakSessionRef.current) return;
           stopSpeaking();
           if (onEnded) onEnded();
         };
         audio.onerror = () => {
-          stopSpeaking();
-          speakWithBrowserFallback(cleanText, messageId);
+          triggerFallback();
         };
 
         await audio.play();
       } catch (err) {
+        if (sessionId !== speakSessionRef.current) return;
         if (err.name === 'AbortError') return;
         if (err.name === 'NotAllowedError') {
           stopSpeaking();
           return;
         }
-        speakWithBrowserFallback(cleanText, messageId);
+        triggerFallback();
       }
     },
     [speakWithBrowserFallback, stopSpeaking, voice]
@@ -224,8 +255,8 @@ export function useVoice({ onTranscript, voice = 'pt-BR-FranciscaNeural' }) {
     recognition.onresult = (event) => {
       const transcript = event.results?.[0]?.[0]?.transcript?.trim();
       setIsListening(false);
-      if (transcript && onTranscript) {
-        onTranscript(transcript);
+      if (transcript && onTranscriptRef.current) {
+        onTranscriptRef.current(transcript);
       }
     };
 
@@ -248,7 +279,7 @@ export function useVoice({ onTranscript, voice = 'pt-BR-FranciscaNeural' }) {
     } catch {
       // ignora se já estiver iniciando
     }
-  }, [SpeechRecognition, isListening, onTranscript, stopSpeaking]);
+  }, [SpeechRecognition, isListening, stopSpeaking]);
 
   const toggleListening = useCallback(() => {
     if (isListening) {
@@ -277,6 +308,7 @@ export function useVoice({ onTranscript, voice = 'pt-BR-FranciscaNeural' }) {
     isSpeaking,
     speakingId,
     voiceError,
+    clearVoiceError,
     speak,
     stopSpeaking,
     toggleListening,

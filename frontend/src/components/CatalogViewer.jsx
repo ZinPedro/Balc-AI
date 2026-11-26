@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { ArrowLeftIcon, ArrowRightIcon } from './Icons';
 
 /**
  * Catálogo Limpo: exibe apenas 1 item por tela com navegação clara
@@ -7,24 +8,30 @@ import { useState } from 'react';
 export function CatalogViewer({ items, onBackToChat, onSelectItem }) {
   const [index, setIndex] = useState(0);
 
+  useEffect(() => {
+    setIndex(0);
+  }, [items]);
+
   if (!items || items.length === 0) return null;
 
-  const current = items[index] || items[0];
+  const safeIndex = Math.min(index, items.length - 1);
+  const current = items[safeIndex] || items[0];
   const entries = Object.entries(current).filter(([key]) => key !== 'id');
 
   return (
     <section className="balc-catalog" aria-label="Catálogo simplificado">
       <button type="button" className="balc-btn balc-btn-primary balc-catalog-back" onClick={onBackToChat}>
-        ← Voltar para a conversa com o BALC
+        <ArrowLeftIcon size={22} />
+        <span>Voltar para a conversa com o BALC</span>
       </button>
 
       <div className="balc-catalog-card">
         <span className="balc-catalog-counter">
-          Item {index + 1} de {items.length}
+          Item {safeIndex + 1} de {items.length}
         </span>
 
         <h2 className="balc-catalog-title">
-          {current.titulo || current.nome || current.name || `Registro #${index + 1}`}
+          {current.titulo || current.nome || current.name || `Registro #${safeIndex + 1}`}
         </h2>
 
         <dl className="balc-catalog-details">
@@ -55,18 +62,20 @@ export function CatalogViewer({ items, onBackToChat, onSelectItem }) {
           <button
             type="button"
             className="balc-btn balc-btn-secondary"
-            disabled={index === 0}
+            disabled={safeIndex === 0}
             onClick={() => setIndex((prev) => Math.max(0, prev - 1))}
           >
-            ⬅️ Anterior
+            <ArrowLeftIcon size={22} />
+            <span>Anterior</span>
           </button>
           <button
             type="button"
             className="balc-btn balc-btn-primary"
-            disabled={index === items.length - 1}
+            disabled={safeIndex === items.length - 1}
             onClick={() => setIndex((prev) => Math.min(items.length - 1, prev + 1))}
           >
-            Próximo ➡️
+            <span>Próximo</span>
+            <ArrowRightIcon size={22} />
           </button>
         </div>
       )}

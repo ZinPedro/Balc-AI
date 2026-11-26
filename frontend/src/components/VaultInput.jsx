@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { EyeIcon, EyeOffIcon, LockIcon, UnlockIcon } from './Icons';
 
 /**
  * Modo Cofre (Zero-Knowledge):
@@ -6,12 +7,20 @@ import { useState } from 'react';
  * ou pelo backend do BALC. O microfone fica desativado neste modo por privacidade.
  */
 export function VaultInput({ siteConfig, identifier, onSuccess, onCancel }) {
+  const [localIdentifier, setLocalIdentifier] = useState(identifier || '');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const effectiveIdentifier = (identifier || localIdentifier).trim();
+
   async function handleSubmit(e) {
     e.preventDefault();
+    if (!effectiveIdentifier) {
+      setError(`Informe ${siteConfig.auth.identifier_label || 'seu identificador'} para continuar.`);
+      return;
+    }
     if (!password.trim()) {
       setError('Digite sua senha para continuar.');
       return;
@@ -42,7 +51,7 @@ export function VaultInput({ siteConfig, identifier, onSuccess, onCancel }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          [auth.identifier_field]: identifier,
+          [auth.identifier_field]: effectiveIdentifier,
           [auth.password_field]: password,
         }),
       });
@@ -71,29 +80,60 @@ export function VaultInput({ siteConfig, identifier, onSuccess, onCancel }) {
   return (
     <form className="balc-vault-card" onSubmit={handleSubmit}>
       <div className="balc-vault-badge">
-        🔒 Modo Cofre Ativo — Sua senha vai direto para {siteConfig.site_name} e nunca passa pela IA
+        <LockIcon size={20} />
+        <span>
+          Modo Cofre Ativo — Sua senha vai direto para {siteConfig.site_name} e nunca passa pela IA
+        </span>
       </div>
 
-      {identifier && (
+      {identifier ? (
         <p className="balc-vault-id">
           Conta: <strong>{identifier}</strong>
         </p>
+      ) : (
+        <>
+          <label htmlFor="balc-vault-identifier" className="balc-label">
+            Informe {siteConfig.auth.identifier_label || 'seu e-mail ou telefone'}:
+          </label>
+          <input
+            id="balc-vault-identifier"
+            type="text"
+            className="balc-input"
+            value={localIdentifier}
+            onChange={(e) => setLocalIdentifier(e.target.value)}
+            placeholder={siteConfig.auth.identifier_label || 'seu e-mail ou telefone'}
+            autoFocus
+            autoComplete="username"
+          />
+        </>
       )}
 
       <label htmlFor="balc-vault-password" className="balc-label">
         Digite sua senha com segurança:
       </label>
 
-      <input
-        id="balc-vault-password"
-        type="password"
-        className="balc-input"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        placeholder="••••••••"
-        autoFocus
-        autoComplete="current-password"
-      />
+      <div className="balc-password-wrap">
+        <input
+          id="balc-vault-password"
+          type={showPassword ? 'text' : 'password'}
+          className="balc-input"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="••••••••"
+          autoFocus={Boolean(identifier)}
+          autoComplete="current-password"
+        />
+        <button
+          type="button"
+          className="balc-password-toggle"
+          onClick={() => setShowPassword((prev) => !prev)}
+          aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+          aria-pressed={showPassword}
+        >
+          {showPassword ? <EyeOffIcon size={22} /> : <EyeIcon size={22} />}
+          <span>{showPassword ? 'Ocultar' : 'Mostrar'}</span>
+        </button>
+      </div>
 
       {error && (
         <p className="balc-error" role="alert">
@@ -103,7 +143,8 @@ export function VaultInput({ siteConfig, identifier, onSuccess, onCancel }) {
 
       <div className="balc-vault-actions">
         <button type="submit" className="balc-btn balc-btn-confirm" disabled={loading}>
-          {loading ? 'Verificando...' : '🔓 Entrar com Segurança'}
+          <UnlockIcon size={22} />
+          <span>{loading ? 'Verificando...' : 'Entrar com Segurança'}</span>
         </button>
         <button type="button" className="balc-btn balc-btn-secondary" onClick={onCancel}>
           Cancelar

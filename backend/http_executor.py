@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import re
 from pathlib import Path
 from typing import Any, Optional
@@ -12,15 +13,26 @@ logger = logging.getLogger("balc.http_executor")
 
 MANIFESTS_DIR = Path(__file__).parent / "manifests"
 SITE_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+PT_BR_THOUSANDS_PATTERN = re.compile(r"^-?\d{1,3}(\.\d{3})+$")
 MAX_SANDBOX_ITEMS = 50
 
-# Dados fictícios usados APENAS quando simulation_mode=True (para testar o BALC sem API externa)
-SANDBOX_CATALOG: list[dict[str, Any]] = [
+# Dados fictícios iniciais usados APENAS quando simulation_mode=True (para testar o BALC sem API externa)
+_DEFAULT_SANDBOX_ITEMS: list[dict[str, Any]] = [
     {"id": 1, "titulo": "Cesta Orgânica Semanal", "quantidade": 20, "unidade": "unidade", "preco": 65.0},
     {"id": 2, "titulo": "Mel Silvestre Puro", "quantidade": 35, "unidade": "pote", "preco": 38.0},
     {"id": 3, "titulo": "Queijo Artesanal Curado", "quantidade": 15, "unidade": "peça", "preco": 48.0},
     {"id": 4, "titulo": "Café Moído Especial 500g", "quantidade": 40, "unidade": "pacote", "preco": 32.0},
 ]
+
+_sandbox_catalogs: dict[str, list[dict[str, Any]]] = {}
+_sandbox_next_ids: dict[str, int] = {}
+
+
+def _get_sandbox_catalog(site_id: str) -> list[dict[str, Any]]:
+    if site_id not in _sandbox_catalogs:
+        _sandbox_catalogs[site_id] = [dict(item) for item in _DEFAULT_SANDBOX_ITEMS]
+        _sandbox_next_ids[site_id] = len(_DEFAULT_SANDBOX_ITEMS) + 1
+    return _sandbox_catalogs[site_id]
 
 
 def load_manifest(site_id: str) -> SiteManifest:
@@ -48,6 +60,20 @@ def find_action(manifest: SiteManifest, action_id: Optional[str]) -> Optional[Si
     return None
 
 
+def _parse_pt_br_number(raw: str) -> float:
+    cleaned = raw.strip().replace("R$", "").replace(" ", "")
+    if "," in cleaned and "." in cleaned:
+        # Formato PT-BR completo: 1.200,50 -> 1200.50
+        cleaned = cleaned.replace(".", "").replace(",", ".")
+    elif "," in cleaned:
+        # Decimal com vírgula: 38,50 -> 38.50
+        cleaned = cleaned.replace(",", ".")
+    elif PT_BR_THOUSANDS_PATTERN.match(cleaned):
+        # Milhar PT-BR sem centavos: 1.500 -> 1500
+        cleaned = cleaned.replace(".", "")
+    return float(cleaned)
+
+
 def _coerce_field_value(field_type: str, value: Any) -> tuple[bool, Any]:
     if value is None or value == "":
         return False, None
@@ -58,10 +84,13 @@ def _coerce_field_value(field_type: str, value: Any) -> tuple[bool, Any]:
         if isinstance(value, bool):
             return False, None
         if isinstance(value, (int, float)):
+            if not math.isfinite(value):
+                return False, None
             return True, value
         try:
-            normalized = str(value).strip().replace("R$", "").replace(" ", "").replace(",", ".")
-            num = float(normalized)
+            num = _parse_pt_br_number(str(value))
+            if not math.isfinite(num):
+                return False, None
             return True, int(num) if num.is_integer() else num
         except ValueError:
             return False, None
@@ -107,7 +136,8 @@ async def fetch_consultative_context(
         return None
 
     if manifest.simulation_mode or not manifest.api_base_url:
-        precos = [item["preco"] for item in SANDBOX_CATALOG if isinstance(item.get("preco"), (int, float))]
+        catalog = _get_sandbox_catalog(manifest.site_id)
+        precos = [item["preco"] for item in catalog if isinstance(item.get("preco"), (int, float))]
         if not precos:
             return None
         media = sum(precos) / len(precos)
@@ -125,8 +155,13 @@ async def fetch_consultative_context(
         async with httpx.AsyncClient(timeout=6.0) as client:
             resp = await client.get(url, headers=headers)
             resp.raise_for_status()
-            payload = resp.json()
-            items = payload if isinstance(payload, list) else payload.get("items", [])
+            payload = resp.json() if resp.content else []
+            if isinstance(payload, list):
+                items = payload
+            elif isinstance(payload, dict):
+                items = payload.get("items", [])
+            else:
+                items = []
             if not isinstance(items, list) or not items:
                 return None
             # Resume até 10 registros para a LLM usar na consultoria sem estourar contexto
@@ -152,20 +187,23 @@ async def execute_client_action(
         return False, [], f"Ainda faltam algumas informações antes de concluir: {campos}."
 
     if manifest.simulation_mode or not manifest.api_base_url:
+        catalog = _get_sandbox_catalog(manifest.site_id)
         if action.method == "GET":
             termo = str(sanitized_dados.get("termo", "")).strip().lower()
             encontrados = [
-                item for item in SANDBOX_CATALOG
+                item for item in catalog
                 if not termo or termo in str(item.get("titulo", "")).lower()
             ]
             if not encontrados:
-                encontrados = SANDBOX_CATALOG[:3]
+                encontrados = catalog[:3]
             return True, encontrados, f"Encontrei {len(encontrados)} opções no catálogo."
 
-        novo_item = {"id": len(SANDBOX_CATALOG) + 1, **sanitized_dados}
-        SANDBOX_CATALOG.insert(0, novo_item)
-        if len(SANDBOX_CATALOG) > MAX_SANDBOX_ITEMS:
-            del SANDBOX_CATALOG[MAX_SANDBOX_ITEMS:]
+        next_id = _sandbox_next_ids.get(manifest.site_id, len(catalog) + 1)
+        _sandbox_next_ids[manifest.site_id] = next_id + 1
+        novo_item = {"id": next_id, **sanitized_dados}
+        catalog.insert(0, novo_item)
+        if len(catalog) > MAX_SANDBOX_ITEMS:
+            del catalog[MAX_SANDBOX_ITEMS:]
         return True, [novo_item], "Prontinho! Sua ação foi registrada com sucesso no ambiente de demonstração."
 
     url = f"{manifest.api_base_url.rstrip('/')}/{action.endpoint.lstrip('/')}"
@@ -182,7 +220,16 @@ async def execute_client_action(
             resp.raise_for_status()
             data = resp.json() if resp.content else {}
             if action.method == "GET":
-                items = data if isinstance(data, list) else data.get("items", [data])
+                if isinstance(data, list):
+                    items = [item for item in data if isinstance(item, dict)]
+                elif isinstance(data, dict):
+                    raw_items = data.get("items")
+                    if isinstance(raw_items, list):
+                        items = [item for item in raw_items if isinstance(item, dict)]
+                    else:
+                        items = [data] if data else []
+                else:
+                    items = []
                 return True, items, f"Encontrei {len(items)} resultados na plataforma {manifest.site_name}."
             return True, [data] if isinstance(data, dict) and data else [], (
                 f"Tudo certo! A ação '{action.name}' foi concluída com sucesso em {manifest.site_name}."
