@@ -7,7 +7,12 @@ import httpx
 from google import genai
 from google.genai import types
 
-from http_executor import execute_client_action, fetch_consultative_context, find_action
+from http_executor import (
+    execute_client_action,
+    fetch_consultative_context,
+    find_action,
+    sanitize_action_payload,
+)
 from schemas import BalcRequest, BalcResponse, LLMDecision, SiteManifest
 
 ProviderName = Literal["groq", "cerebras", "openrouter", "gemini", "fallback_local"]
@@ -274,6 +279,8 @@ def _fallback_local_decision(req: BalcRequest, manifest: SiteManifest) -> BalcRe
 
 
 async def process_balc_turn(req: BalcRequest, manifest: SiteManifest) -> BalcResponse:
+    is_authenticated = bool(req.token_usuario and req.token_usuario.strip())
+
     active_action = find_action(manifest, req.acao_atual)
     consultative_context = None
     if active_action:
@@ -286,7 +293,8 @@ async def process_balc_turn(req: BalcRequest, manifest: SiteManifest) -> BalcRes
     recent_history = [f"{t.role}: {t.text}" for t in req.historico[-6:]]
     turn_input = (
         f"ESTADO ATUAL DA SESSÃO:\n"
-        f"- usuario_autenticado: {req.usuario_autenticado}\n"
+        f"- usuario_autenticado: {is_authenticated}\n"
+        f"- modo_entrada_anterior: {req.modo_entrada_anterior}\n"
         f"- acao_atual: {req.acao_atual}\n"
         f"- dados_coletados: {json.dumps(req.dados_coletados, ensure_ascii=False)}\n"
         f"- historico_recente: {json.dumps(recent_history, ensure_ascii=False)}\n\n"
@@ -300,9 +308,57 @@ async def process_balc_turn(req: BalcRequest, manifest: SiteManifest) -> BalcRes
     dados_atualizados = _parse_collected_json(decision.dados_coletados_json, req.dados_coletados)
 
     target_action = find_action(manifest, decision.acao_atual)
+
+    # Bloqueio determinístico de autenticação para ações protegidas
+    if target_action and target_action.requires_auth and not is_authenticated:
+        if decision.executar_acao_confirmada or target_action.method == "GET":
+            return BalcResponse(
+                mensagem_balconista=(
+                    f"Para continuar com '{target_action.name}', você precisa entrar na sua conta em "
+                    f"{manifest.site_name}. Qual é {manifest.auth.identifier_label}?"
+                ),
+                modo_entrada="normal",
+                opcoes_botoes=["Cancelar"],
+                acao_atual="autenticar",
+                dados_coletados=dados_atualizados,
+                acao_concluida=False,
+                itens_catalogo=[],
+                origem_motor=provider_used,
+            )
+
     if decision.executar_acao_confirmada and target_action:
+        sanitized_dados, missing_labels = sanitize_action_payload(target_action, dados_atualizados)
+
+        # Impede bypass de confirmação (ex: prompt injection ou alucinação da LLM no 1º turno)
+        if target_action.method != "GET" and req.modo_entrada_anterior != "confirmacao":
+            if missing_labels:
+                campos = ", ".join(missing_labels)
+                return BalcResponse(
+                    mensagem_balconista=f"Antes de confirmar, ainda preciso saber: {campos}.",
+                    modo_entrada="normal",
+                    opcoes_botoes=["Cancelar"],
+                    acao_atual=target_action.id,
+                    dados_coletados=sanitized_dados,
+                    acao_concluida=False,
+                    itens_catalogo=[],
+                    origem_motor=provider_used,
+                )
+            resumo = ", ".join(f"{k}: {v}" for k, v in sanitized_dados.items())
+            return BalcResponse(
+                mensagem_balconista=(
+                    f"Confira os dados antes de concluir ({resumo}). Posso confirmar?"
+                ),
+                modo_entrada="confirmacao",
+                opcoes_botoes=["Confirmar", "Alterar dados", "Cancelar"],
+                acao_atual=target_action.id,
+                dados_coletados=sanitized_dados,
+                acao_concluida=False,
+                itens_catalogo=[],
+                origem_motor=provider_used,
+            )
+
         ok, itens, feedback = await execute_client_action(
-            manifest, target_action, dados_atualizados, req.token_usuario
+            manifest, target_action, sanitized_dados, req.token_usuario
         )
         return BalcResponse(
             mensagem_balconista=feedback,
@@ -316,14 +372,10 @@ async def process_balc_turn(req: BalcRequest, manifest: SiteManifest) -> BalcRes
         )
 
     if target_action and target_action.method == "GET":
-        missing = [
-            f.name
-            for f in target_action.fields
-            if f.required and not dados_atualizados.get(f.name)
-        ]
-        if not missing:
+        sanitized_dados, missing_labels = sanitize_action_payload(target_action, dados_atualizados)
+        if not missing_labels:
             ok, itens, feedback = await execute_client_action(
-                manifest, target_action, dados_atualizados, req.token_usuario
+                manifest, target_action, sanitized_dados, req.token_usuario
             )
             return BalcResponse(
                 mensagem_balconista=feedback,

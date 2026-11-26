@@ -12,9 +12,20 @@
 
   const currentScript = document.currentScript;
   const siteId = (currentScript && currentScript.getAttribute("data-site")) || "demo_generico";
-  const balcBaseUrl =
-    (currentScript && currentScript.getAttribute("data-url")) ||
-    (currentScript ? new URL(currentScript.src).origin : "http://localhost:5174");
+  const fallbackOrigin = currentScript ? new URL(currentScript.src).origin : "http://localhost:5174";
+  const rawBaseUrl = (currentScript && currentScript.getAttribute("data-url")) || fallbackOrigin;
+  let balcBaseUrl = fallbackOrigin;
+  let expectedOrigin = fallbackOrigin;
+  try {
+    const parsedUrl = new URL(rawBaseUrl, window.location.href);
+    if (parsedUrl.protocol === "https:" || parsedUrl.protocol === "http:") {
+      balcBaseUrl = parsedUrl.href;
+      expectedOrigin = parsedUrl.origin;
+    }
+  } catch {
+    balcBaseUrl = fallbackOrigin;
+    expectedOrigin = fallbackOrigin;
+  }
 
   // 1. Botão flutuante de alto contraste
   const triggerBtn = document.createElement("button");
@@ -78,8 +89,11 @@
 
   triggerBtn.addEventListener("click", openBalc);
 
-  // Permite que o botão "Fechar BALC" dentro do iframe feche o overlay
+  // Permite que o botão "Fechar BALC" dentro do iframe feche o overlay (validando origem e fonte)
   window.addEventListener("message", function (event) {
+    if (event.origin !== expectedOrigin || event.source !== iframe.contentWindow) {
+      return;
+    }
     if (event.data && event.data.type === "BALC_CLOSE") {
       closeBalc();
     }

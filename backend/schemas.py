@@ -62,19 +62,27 @@ class PublicSiteConfig(BaseModel):
     auth: AuthConfig
 
 
+AllowedVoice = Literal[
+    "pt-BR-FranciscaNeural",
+    "pt-BR-AntonioNeural",
+    "pt-BR-ThalitaMultilingualNeural",
+]
+
+
 class ConversationTurn(BaseModel):
     role: Literal["user", "assistant"]
-    text: str
+    text: str = Field(..., min_length=1, max_length=2000)
 
 
 class BalcRequest(BaseModel):
-    site_id: str = Field(default="balc_livre")
-    texto_usuario: str = Field(..., min_length=1)
-    acao_atual: Optional[str] = None
+    site_id: str = Field(default="balc_livre", min_length=1, max_length=64)
+    texto_usuario: str = Field(..., min_length=1, max_length=2000)
+    acao_atual: Optional[str] = Field(default=None, max_length=64)
     dados_coletados: dict[str, Any] = Field(default_factory=dict)
-    historico: list[ConversationTurn] = Field(default_factory=list)
+    historico: list[ConversationTurn] = Field(default_factory=list, max_length=20)
     usuario_autenticado: bool = False
-    token_usuario: Optional[str] = None
+    token_usuario: Optional[str] = Field(default=None, max_length=4096)
+    modo_entrada_anterior: Literal["normal", "senha_cofre", "confirmacao"] = "normal"
 
 
 class LLMDecision(BaseModel):

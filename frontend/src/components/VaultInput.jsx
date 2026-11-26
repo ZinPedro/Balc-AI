@@ -31,6 +31,12 @@ export function VaultInput({ siteConfig, identifier, onSuccess, onCancel }) {
 
       const auth = siteConfig.auth;
       const loginUrl = `${siteConfig.api_base_url.replace(/\/$/, '')}/${auth.login_endpoint.replace(/^\//, '')}`;
+      const parsedLoginUrl = new URL(loginUrl);
+      const isLocalDev =
+        parsedLoginUrl.hostname === 'localhost' || parsedLoginUrl.hostname === '127.0.0.1';
+      if (parsedLoginUrl.protocol !== 'https:' && !isLocalDev) {
+        throw new Error('Conexão insegura: o login requer HTTPS para proteger sua senha.');
+      }
 
       const resp = await fetch(loginUrl, {
         method: 'POST',

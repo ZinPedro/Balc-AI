@@ -1,9 +1,26 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CatalogViewer } from './components/CatalogViewer';
+import {
+  CheckIcon,
+  CloseIcon,
+  MicIcon,
+  MoonIcon,
+  PhoneIcon,
+  PhoneOffIcon,
+  SendIcon,
+  StopIcon,
+  SunIcon,
+  VolumeIcon,
+  VolumeOffIcon,
+} from './components/Icons';
 import { VaultInput } from './components/VaultInput';
 import { useVoice } from './hooks/useVoice';
 
 const BALC_API_URL = import.meta.env.VITE_BALC_API_URL || 'http://localhost:8001';
+
+function createMsgId(prefix) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
 
 export default function App() {
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
@@ -11,12 +28,15 @@ export default function App() {
   const isEmbedded = params.get('embedded') === '1';
 
   const [theme, setTheme] = useState('light');
+  const [autoSpeak, setAutoSpeak] = useState(false);
+  const [isCallActive, setIsCallActive] = useState(false);
+  const [voice, setVoice] = useState('pt-BR-FranciscaNeural');
   const [siteConfig, setSiteConfig] = useState(null);
   const [loadingConfig, setLoadingConfig] = useState(true);
   const [error, setError] = useState('');
 
-  // Estado do Modo Foco (1 decisão/pergunta por tela)
-  const [mensagem, setMensagem] = useState('');
+  // Estado da conversa em formato de chat
+  const [mensagens, setMensagens] = useState([]);
   const [modoEntrada, setModoEntrada] = useState('normal'); // 'normal' | 'senha_cofre' | 'confirmacao'
   const [opcoes, setOpcoes] = useState([]);
   const [acaoAtual, setAcaoAtual] = useState(null);
@@ -35,9 +55,15 @@ export default function App() {
   const [textoInput, setTextoInput] = useState('');
   const [enviando, setEnviando] = useState(false);
 
+  const chatEndRef = useRef(null);
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [mensagens, enviando]);
 
   const sendMessage = useCallback(
     async (texto, overrideState = {}) => {
@@ -47,6 +73,9 @@ export default function App() {
       setEnviando(true);
       setError('');
       setTextoInput('');
+
+      const userMsg = { id: createMsgId('user'), role: 'user', text: clean };
+      setMensagens((prev) => [...prev, userMsg]);
 
       const nextHistory = [...historico, { role: 'user', text: clean }].slice(-8);
 
@@ -67,6 +96,10 @@ export default function App() {
                 : Boolean(tokenUsuario),
             token_usuario:
               overrideState.tokenUsuario !== undefined ? overrideState.tokenUsuario : tokenUsuario,
+            modo_entrada_anterior:
+              overrideState.modoEntradaAnterior !== undefined
+                ? overrideState.modoEntradaAnterior
+                : modoEntrada,
           }),
         });
 
@@ -76,7 +109,13 @@ export default function App() {
         }
 
         const data = await resp.json();
-        setMensagem(data.mensagem_balconista);
+        const assistantMsg = {
+          id: createMsgId('assistant'),
+          role: 'assistant',
+          text: data.mensagem_balconista,
+        };
+
+        setMensagens((prev) => [...prev, assistantMsg]);
         setModoEntrada(data.modo_entrada || 'normal');
         setOpcoes(data.opcoes_botoes || []);
         setAcaoAtual(data.acao_atual || null);
@@ -99,11 +138,22 @@ export default function App() {
         setEnviando(false);
       }
     },
-    [acaoAtual, dadosColetados, enviando, historico, siteId, tokenUsuario]
+    [acaoAtual, dadosColetados, enviando, historico, modoEntrada, siteId, tokenUsuario]
   );
 
-  const { isSupported, isListening, isSpeaking, voiceError, speak, stopSpeaking, toggleListening } =
-    useVoice({
+  const {
+    isSupported,
+    isListening,
+    isSpeaking,
+    speakingId,
+    voiceError,
+    speak,
+    stopSpeaking,
+    toggleListening,
+    startListening,
+    stopListening,
+  } = useVoice({
+      voice,
       onTranscript: (transcript) => {
         sendMessage(transcript);
       },
@@ -123,7 +173,7 @@ export default function App() {
         const cfg = await resp.json();
         if (!active) return;
         setSiteConfig(cfg);
-        setMensagem(cfg.greeting);
+        setMensagens([{ id: 'greeting', role: 'assistant', text: cfg.greeting }]);
         setOpcoes(cfg.initial_options || []);
       } catch (err) {
         if (!active) return;
@@ -140,12 +190,78 @@ export default function App() {
     };
   }, [siteId]);
 
-  // Lê em voz alta automaticamente a nova fala do Balconista
+  // Lê em voz alta automaticamente apenas quando uma nova fala do Balconista chega
+  const lastMessage = mensagens[mensagens.length - 1];
+  const lastAutoSpokenIdRef = useRef(null);
   useEffect(() => {
-    if (mensagem && !loadingConfig) {
-      speak(mensagem);
+    if (
+      (autoSpeak || isCallActive) &&
+      lastMessage &&
+      lastMessage.role === 'assistant' &&
+      !loadingConfig &&
+      lastAutoSpokenIdRef.current !== lastMessage.id
+    ) {
+      lastAutoSpokenIdRef.current = lastMessage.id;
+      speak(lastMessage.text, lastMessage.id);
     }
-  }, [mensagem, loadingConfig, speak]);
+  }, [autoSpeak, isCallActive, lastMessage, loadingConfig, speak]);
+
+  // No modo ligação ao vivo, reabre o microfone automaticamente quando o BALC termina de falar
+  useEffect(() => {
+    if (
+      !isCallActive ||
+      isListening ||
+      isSpeaking ||
+      enviando ||
+      loadingConfig ||
+      modoEntrada === 'senha_cofre' ||
+      voiceError
+    ) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      startListening();
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [isCallActive, isListening, isSpeaking, enviando, loadingConfig, modoEntrada, voiceError, startListening]);
+
+  const speakFromIndex = useCallback(
+    (startIndex) => {
+      const nextIndex = mensagens.findIndex(
+        (m, idx) => idx >= startIndex && m.role === 'assistant'
+      );
+      if (nextIndex === -1) return;
+
+      const target = mensagens[nextIndex];
+      speak(target.text, target.id, () => {
+        speakFromIndex(nextIndex + 1);
+      });
+    },
+    [mensagens, speak]
+  );
+
+  function handleToggleAutoSpeak() {
+    setAutoSpeak((prev) => {
+      if (prev) stopSpeaking();
+      return !prev;
+    });
+  }
+
+  function handleToggleCallMode() {
+    if (isCallActive) {
+      setIsCallActive(false);
+      stopListening();
+      stopSpeaking();
+      return;
+    }
+    setIsCallActive(true);
+    setAutoSpeak(true);
+    if (!isSpeaking && !enviando && modoEntrada !== 'senha_cofre') {
+      startListening();
+    }
+  }
 
   function handleVaultSuccess(token) {
     setTokenUsuario(token);
@@ -154,19 +270,35 @@ export default function App() {
       acaoAtual: null,
       usuarioAutenticado: true,
       tokenUsuario: token,
+      modoEntradaAnterior: 'normal',
     });
   }
 
   function handleVaultCancel() {
     setModoEntrada('normal');
     setAcaoAtual(null);
-    setMensagem('Tudo bem! Cancelei o acesso à conta. Como posso te ajudar agora?');
+    setMensagens((prev) => [
+      ...prev,
+      {
+        id: createMsgId('assistant'),
+        role: 'assistant',
+        text: 'Tudo bem! Cancelei o acesso à conta. Como posso te ajudar agora?',
+      },
+    ]);
     setOpcoes(siteConfig?.initial_options || []);
   }
 
   function handleCloseEmbedded() {
     stopSpeaking();
-    window.parent.postMessage({ type: 'BALC_CLOSE' }, '*');
+    let targetOrigin = '*';
+    if (document.referrer) {
+      try {
+        targetOrigin = new URL(document.referrer).origin;
+      } catch {
+        targetOrigin = '*';
+      }
+    }
+    window.parent.postMessage({ type: 'BALC_CLOSE' }, targetOrigin);
   }
 
   function handleTextSubmit(e) {
@@ -182,24 +314,73 @@ export default function App() {
     <div className="balc-shell">
       <header className="balc-header">
         <div className="balc-brand">
-          <strong>🎙️ BALC</strong>
+          <strong className="balc-brand-title">
+            <MicIcon size={22} />
+            <span>BALC</span>
+          </strong>
           <span>{siteConfig ? siteConfig.site_name : 'Carregando ambiente...'}</span>
         </div>
 
         <div className="balc-header-actions">
-          {tokenUsuario && <span className="balc-auth-pill">✅ Conta Conectada</span>}
+          {tokenUsuario && (
+            <span className="balc-auth-pill">
+              <CheckIcon size={16} />
+              <span>Conta Conectada</span>
+            </span>
+          )}
+
+          <select
+            className="balc-voice-select"
+            value={voice}
+            onChange={(e) => setVoice(e.target.value)}
+            aria-label="Selecionar voz"
+            title="Selecionar voz"
+          >
+            <option value="pt-BR-FranciscaNeural">Francisca</option>
+            <option value="pt-BR-AntonioNeural">Antonio</option>
+            <option value="pt-BR-ThalitaMultilingualNeural">Thalita</option>
+          </select>
 
           <button
             type="button"
-            className="balc-top-btn"
-            onClick={() => setTheme((prev) => (prev === 'light' ? 'dark' : 'light'))}
+            className={`balc-icon-btn ${isCallActive ? 'active' : ''}`}
+            onClick={handleToggleCallMode}
+            disabled={!isSupported}
+            aria-label={isCallActive ? 'Encerrar ligação ao vivo' : 'Iniciar ligação ao vivo'}
+            title={isCallActive ? 'Encerrar ligação ao vivo' : 'Modo ligação ao vivo'}
           >
-            {theme === 'light' ? '🌙 Modo Escuro' : '☀️ Modo Claro'}
+            {isCallActive ? <PhoneOffIcon size={20} /> : <PhoneIcon size={20} />}
+          </button>
+
+          <button
+            type="button"
+            className={`balc-icon-btn ${autoSpeak ? 'active' : ''}`}
+            onClick={handleToggleAutoSpeak}
+            aria-label={autoSpeak ? 'Desativar leitura automática' : 'Ativar leitura automática'}
+            title={autoSpeak ? 'Leitura automática ativada' : 'Leitura automática desativada'}
+          >
+            {autoSpeak ? <VolumeIcon size={20} /> : <VolumeOffIcon size={20} />}
+          </button>
+
+          <button
+            type="button"
+            className="balc-icon-btn"
+            onClick={() => setTheme((prev) => (prev === 'light' ? 'dark' : 'light'))}
+            aria-label={theme === 'light' ? 'Ativar modo escuro' : 'Ativar modo claro'}
+            title={theme === 'light' ? 'Modo escuro' : 'Modo claro'}
+          >
+            {theme === 'light' ? <MoonIcon size={20} /> : <SunIcon size={20} />}
           </button>
 
           {isEmbedded && (
-            <button type="button" className="balc-top-btn" onClick={handleCloseEmbedded}>
-              ✖️ Voltar ao site normal
+            <button
+              type="button"
+              className="balc-icon-btn"
+              onClick={handleCloseEmbedded}
+              aria-label="Voltar ao site normal"
+              title="Voltar ao site normal"
+            >
+              <CloseIcon size={20} />
             </button>
           )}
         </div>
@@ -222,21 +403,59 @@ export default function App() {
         />
       ) : (
         <>
-          <main className="balc-focus-card" aria-live="polite">
-            <p className="balc-message">{loadingConfig ? 'Preparando seu atendimento...' : mensagem}</p>
+          <main className="balc-chat-feed" aria-live="polite">
+            {loadingConfig ? (
+              <div className="balc-chat-row assistant">
+                <div className="balc-bubble assistant">
+                  <p className="balc-bubble-text">Preparando seu atendimento...</p>
+                </div>
+              </div>
+            ) : (
+              mensagens.map((msg, idx) => {
+                const isThisSpeaking = isSpeaking && speakingId === msg.id;
+                return (
+                  <div key={msg.id} className={`balc-chat-row ${msg.role}`}>
+                    <div className={`balc-bubble ${msg.role}`}>
+                      <span className="balc-bubble-author">
+                        {msg.role === 'assistant' ? 'BALC' : 'Você'}
+                      </span>
+                      <p className="balc-bubble-text">{msg.text}</p>
 
-            <div className="balc-audio-row">
-              <button
-                type="button"
-                className="balc-top-btn"
-                onClick={() => (isSpeaking ? stopSpeaking() : speak(mensagem))}
-                disabled={!mensagem}
-              >
-                {isSpeaking ? '⏹️ Parar leitura' : '🔊 Ouvir novamente'}
-              </button>
+                      {msg.role === 'assistant' && (
+                        <div className="balc-bubble-actions">
+                          <button
+                            type="button"
+                            className="balc-audio-btn"
+                            onClick={() => {
+                              if (isThisSpeaking) {
+                                stopSpeaking();
+                              } else {
+                                setAutoSpeak(true);
+                                speakFromIndex(idx);
+                              }
+                            }}
+                            aria-label={isThisSpeaking ? 'Parar leitura' : 'Ouvir mensagem'}
+                            title={isThisSpeaking ? 'Parar leitura' : 'Ouvir mensagem'}
+                          >
+                            {isThisSpeaking ? <StopIcon size={16} /> : <VolumeIcon size={16} />}
+                            <span>{isThisSpeaking ? 'Parar' : 'Ouvir'}</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
 
-              {enviando && <span className="balc-status-hint">Pensando na melhor resposta...</span>}
-            </div>
+            {enviando && (
+              <div className="balc-chat-row assistant">
+                <div className="balc-bubble assistant balc-bubble-typing">
+                  <span className="balc-bubble-author">BALC</span>
+                  <p className="balc-bubble-text">Pensando na melhor resposta...</p>
+                </div>
+              </div>
+            )}
 
             {collectedEntries.length > 0 && (
               <div className="balc-summary-box">
@@ -250,6 +469,8 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            <div ref={chatEndRef} />
           </main>
 
           {modoEntrada === 'senha_cofre' && siteConfig ? (
@@ -274,8 +495,12 @@ export default function App() {
                         disabled={enviando}
                         onClick={() => sendMessage(opcao)}
                       >
-                        {!isConfirm && <span className="balc-option-num">{idx + 1}</span>}
-                        <span>{isConfirm ? `✅ ${opcao}` : opcao}</span>
+                        {isConfirm ? (
+                          <CheckIcon size={22} />
+                        ) : (
+                          <span className="balc-option-num">{idx + 1}</span>
+                        )}
+                        <span>{opcao}</span>
                       </button>
                     );
                   })}
@@ -291,13 +516,31 @@ export default function App() {
 
                 <button
                   type="button"
-                  className={`balc-btn balc-mic-btn ${isListening ? 'listening' : ''}`}
-                  onClick={toggleListening}
+                  className={`balc-btn balc-mic-btn ${isListening || isCallActive ? 'listening' : ''}`}
+                  onClick={() => {
+                    if (isCallActive && isSpeaking) {
+                      stopSpeaking();
+                      startListening();
+                      return;
+                    }
+                    toggleListening();
+                  }}
                   disabled={enviando || !isSupported}
                 >
-                  {isListening
-                    ? '🛑 Ouvindo você... Toque para parar'
-                    : '🎙️ Toque aqui para Falar'}
+                  {isListening ? <StopIcon size={24} /> : <MicIcon size={24} />}
+                  <span>
+                    {isCallActive
+                      ? isSpeaking
+                        ? 'BALC falando... Toque para interromper'
+                        : enviando
+                          ? 'BALC pensando...'
+                          : isListening
+                            ? 'Ligação ativa — ouvindo você...'
+                            : 'Ligação ativa — toque para falar'
+                      : isListening
+                        ? 'Ouvindo você... Toque para parar'
+                        : 'Toque aqui para Falar'}
+                  </span>
                 </button>
 
                 <form className="balc-text-form" onSubmit={handleTextSubmit}>
@@ -315,7 +558,8 @@ export default function App() {
                     className="balc-btn balc-btn-primary balc-send-btn"
                     disabled={enviando || !textoInput.trim()}
                   >
-                    Enviar
+                    <SendIcon size={20} />
+                    <span>Enviar</span>
                   </button>
                 </form>
               </footer>

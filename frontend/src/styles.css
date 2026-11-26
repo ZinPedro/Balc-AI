@@ -48,23 +48,23 @@ body {
 }
 
 .balc-shell {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   max-width: 860px;
   margin: 0 auto;
-  padding: 16px 20px 28px;
-  gap: 20px;
+  padding: 16px 20px 20px;
+  gap: 14px;
 }
 
 .balc-header {
   display: flex;
-  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding-bottom: 14px;
+  padding-bottom: 12px;
   border-bottom: 3px solid var(--border);
+  flex-shrink: 0;
 }
 
 .balc-brand {
@@ -73,31 +73,82 @@ body {
   gap: 2px;
 }
 
-.balc-brand strong {
-  font-size: 1.5rem;
+.balc-brand-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.45rem;
   letter-spacing: 0.02em;
 }
 
 .balc-brand span {
-  font-size: 1.05rem;
+  font-size: 1rem;
   color: var(--text-muted);
 }
 
 .balc-header-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
+}
+
+.balc-icon-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 12px;
+  border: 2px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, transform 0.08s ease;
+}
+
+.balc-icon-btn:hover {
+  background: var(--surface-strong);
+}
+
+.balc-icon-btn:active {
+  transform: scale(0.95);
+}
+
+.balc-icon-btn.active {
+  background: var(--primary);
+  color: var(--primary-text);
+  border-color: var(--primary);
+}
+
+.balc-voice-select {
+  height: 44px;
+  padding: 0 10px;
+  border-radius: 12px;
+  border: 2px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.balc-voice-select:hover {
+  background: var(--surface-strong);
 }
 
 .balc-top-btn {
-  padding: 12px 18px;
-  font-size: 1.05rem;
+  padding: 10px 16px;
+  font-size: 1rem;
   font-weight: 700;
   border-radius: 12px;
   border: 2px solid var(--border);
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .balc-top-btn:hover {
@@ -107,37 +158,106 @@ body {
 .balc-auth-pill {
   display: inline-flex;
   align-items: center;
-  padding: 10px 14px;
+  gap: 6px;
+  padding: 8px 12px;
   border-radius: 999px;
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 700;
   background: var(--confirm);
   color: var(--confirm-text);
 }
 
-/* Cartão Principal do Balconista (Modo Foco) */
-.balc-focus-card {
-  background: var(--surface);
-  border: 3px solid var(--border);
-  border-radius: 20px;
-  padding: 26px 24px;
+/* Área de Conversa (Chat) */
+.balc-chat-feed {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
+  padding: 6px 4px;
 }
 
-.balc-message {
-  margin: 0;
-  font-size: clamp(1.65rem, 3.6vw, 2.25rem);
-  font-weight: 700;
-  line-height: 1.35;
-}
-
-.balc-audio-row {
+.balc-chat-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
+  width: 100%;
+}
+
+.balc-chat-row.assistant {
+  justify-content: flex-start;
+}
+
+.balc-chat-row.user {
+  justify-content: flex-end;
+}
+
+.balc-bubble {
+  max-width: 82%;
+  padding: 16px 20px;
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.balc-bubble.assistant {
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--border);
+  border-bottom-left-radius: 6px;
+}
+
+.balc-bubble.user {
+  background: var(--primary);
+  color: var(--primary-text);
+  border: 2px solid var(--primary);
+  border-bottom-right-radius: 6px;
+}
+
+.balc-bubble-typing {
+  opacity: 0.8;
+}
+
+.balc-bubble-author {
+  font-size: 0.85rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.78;
+}
+
+.balc-bubble-text {
+  margin: 0;
+  font-size: clamp(1.15rem, 2.2vw, 1.35rem);
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.balc-bubble-actions {
+  display: flex;
   align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.balc-audio-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.balc-audio-btn:hover {
+  background: var(--surface-strong);
 }
 
 /* Resumo progressivo dos dados coletados */
